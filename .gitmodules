@@ -1,0 +1,4 @@
+[submodule "ccpp-physics"]
+	path = ccpp-physics
+	url = https://github.com/dustinswales/ccpp-physics/
+	branch = UFS_ccpp_aerosols
