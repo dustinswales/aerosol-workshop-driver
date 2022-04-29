@@ -6,7 +6,6 @@ add_subdirectory(array)
 add_subdirectory(grid)
 add_subdirectory(interpolator)
 add_subdirectory(state)
-add_subdirectory(UFS)
 
 ################################################################################
 # Aerosol interface library
@@ -25,8 +24,7 @@ add_library(aero
             ${array_src}
             ${grid_src}
             ${interpolator_src}
-            ${state_src}
-	    ${ufs_src})
+            ${state_src})
 
 target_include_directories(aero PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 
