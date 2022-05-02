@@ -25,17 +25,17 @@ module ufs_aerosol_optics
           nCol_,         & ! Number of horizontal columns
           nLay_,         & ! Number of vertical layers
           nTracer_,      & ! Number of aerosol tracers
-          nBandsLW_,     & ! Number of spectral bands (longwave)
-          nBandsSW_        ! Number of spectral bands (shortwave) 
+          nBandsSW_,     & ! Number of spectral bands (shortwave) 
+          nBandsLW_        ! Number of spectral bands (longwave) 
      real(rk), allocatable :: &
-          tauLW_(:,:,:), & ! Optical depth (longwave)
-          ssaLW_(:,:,:), & ! Single scattering albedo (longwave)
-          gLW_(:,:,:),   & ! Asymmetry parameter (longwave)
           tauSW_(:,:,:), & ! Optical depth (shortwave)
           ssaSW_(:,:,:), & ! Single scattering albedo (shortwave)
-          gSW_(:,:,:)      ! Asymmetry parameter (shortwave)
+          gSW_(:,:,:),   & ! Asymmetry parameter (shortwave)
+          tauLW_(:,:,:), & ! Optical depth (longwave)
+          ssaLW_(:,:,:), & ! Single scattering albedo (longwave)
+          gLW_(:,:,:)      ! Asymmetry parameter (longwave)
     !> Optics grid in wave number [m-1]
-    type(grid_t) :: gridLW_, gridSW_
+    type(grid_t) :: grid_
   contains
     procedure :: name => model_name
     procedure :: create_state
@@ -73,43 +73,25 @@ contains
 
   !> Creates and configure the aerosol model
   function constructor( description_file ) result( model )
-
+    ! Dependencies
     use aero_array,                    only : array_t
     use aero_util,                     only : assert_msg
     use module_radsw_parameters,       only : NBDSW, wvnsw1=>wvnum1, wvnsw2=>wvnum2
     use module_radlw_parameters,       only : NBDLW, wvnlw1, wvnlw2
     use module_radiation_aerosols,     only : aer_init
-#ifdef AERO_USE_NETCDF
-    use netcdf,                        only : nf90_open, nf90_close,          &
-                                              NF90_NOWRITE, NF90_NOERR
-#endif
+
     type(ufs_aerosol_optics_t), pointer    :: model
     character(len=*), intent(in) :: description_file
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !! Set parameters/configuration data for the aerosol package here !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-    ! Initialize the aerosol grid with wavelength data pulled from
-    ! https://acp.copernicus.org/articles/18/7815/2018/acp-18-7815-2018-f03.pdf
-    real(kind=rk) :: wavelengths(4) = & ! [nm]
-      (/ 440.0_rk, 675.0_rk, 870.0_rk, 1020.0_rk /)
-    real(kind=rk) :: wave_numbers(4) ! [m-1]
-    class(array_t), pointer :: interfaces, interfacesLW, interfacesSW
+    class(array_t), pointer :: interfaces
     integer :: i, netcdf_file
     integer,parameter :: nCol    = 1
     integer,parameter :: nLay    = 1
     integer,parameter :: nTracer = 1
 
-    ! Longwave spectral grid 
-    interfacesLW => array_t( (wvnlw1+wvnlw2)*0.5 )
-    allocate( model )
-    model%gridLW_ = grid_t( interfacesLW )
-    
-    ! Shortwave spectral grid
-    interfacesSW => array_t( (wvnsw1+wvnsw2)*0.5 )
-    allocate( model )
-    model%gridSW_ = grid_t( interfacesSW )
+    ! Shortwave/Longwave spectral grid
+    interfaces => array_t( ([wvnsw1+wvnsw2,wvnlw1+wvnlw2])*0.5 )
+    allocate(model)
+    model%grid_ = grid_t(interfaces)
 
     model%do_SW_ = .true.
     model%do_LW_ = .true.
@@ -117,14 +99,14 @@ contains
     model%nCol_     = nCol
     model%nLay_     = nLay
     model%nTracer_  = nTracer
-    model%nBandsLW_ = NBDLW
     model%nBandsSW_ = NBDSW
-    allocate(model%tauLW_(model%nCol_, model%nLay_, model%nBandsLW_))
-    allocate(model%ssaLW_(model%nCol_, model%nLay_, model%nBandsLW_))
-    allocate(model%gLW_(  model%nCol_, model%nLay_, model%nBandsLW_))
-    allocate(model%tauSW_(model%nCol_, model%nLay_, model%nBandsSW_))
-    allocate(model%ssaSW_(model%nCol_, model%nLay_, model%nBandsSW_))
-    allocate(model%gSW_(  model%nCol_, model%nLay_, model%nBandsSW_))
+    model%nBandsLW_ = NBDLW
+    !allocate(model%tauSW_(model%nCol_, model%nLay_, model%nBandsSW_))
+    !allocate(model%ssaSW_(model%nCol_, model%nLay_, model%nBandsSW_))
+    !allocate(model%gSW_(  model%nCol_, model%nLay_, model%nBandsSW_))
+    !allocate(model%tauLW_(model%nCol_, model%nLay_, model%nBandsLW_))
+    !allocate(model%ssaLW_(model%nCol_, model%nLay_, model%nBandsLW_))
+    !allocate(model%gLW_(  model%nCol_, model%nLay_, model%nBandsLW_))
 
   end function constructor
 
@@ -136,7 +118,7 @@ contains
     character(len=:), allocatable :: model_name
     class(ufs_aerosol_optics_t), intent(in) :: this
 
-    model_name = "my model"
+    model_name = "ufs aerosol optics"
 
   end function model_name
 
@@ -175,7 +157,7 @@ contains
     !> My aerosol model
     class(ufs_aerosol_optics_t), intent(in) :: this
 
-    optics_grid = this%gridLW_%clone( )
+    optics_grid = this%grid_%clone( )
 
   end function optics_grid
 
@@ -185,7 +167,8 @@ contains
   !! arrays
   subroutine compute_optics(this, state, od, od_ssa, od_asym )
     use aero_array,                   only : array_t
-    use module_radiation_aerosols,    only : setaer
+    use module_radiation_aerosols,    only : setaer, NSPC1
+    use aero_constants,               only : rk => real_kind
     !
     class(ufs_aerosol_optics_t), intent(inout) :: this
     class(state_t),    intent(inout) :: state
@@ -193,22 +176,26 @@ contains
     class(array_t),    intent(inout) :: od_ssa     ! The code breaks if I remove these?
     class(array_t),    intent(inout) :: od_asym    ! The code breaks if I remove these?
     ! Locals
-    real(rk),allocatable :: aerSW_temp(:,:,:,:), aerLW_temp(:,:,:,:), aerodp_temp(:,:)
+    real(rk) :: aerSW_temp( this%nCol_, this%nLay_, this%nBandsSW_, 3), &
+                aerLW_temp( this%nCol_, this%nLay_, this%nBandsLW_, 3), &
+                aerodp_temp(this%nCol_, NSPC1)
 
     select type( state )
     class is( ufs_state_t )
-       allocate(aerSW_temp(state%nCol_, state%nLay_, this%nBandsSW_, 3))
-       allocate(aerLW_temp(state%nCol_, state%nLay_, this%nBandsLW_, 3))
-       call setaer(state%plev_, state%play_, state%prslk_, state%tvlay_,     &
-            state%rhlay_, state%lsmask_, state%tracer_, state%aerfld_,       &
-            state%lon_, state%lat_, state%nCol_, state%nLay_, state%nLay_+1, &
+       call setaer(state%plev_, state%play_, state%prslk_, state%tvlay_,   &
+            state%rhlay_, state%lsmask_, state%tracer_, state%aerfld_,     &
+            state%lon_, state%lat_, this%nCol_, this%nLay_, this%nLay_+1,  &
             this%do_SW_, this%do_LW_, aerSW_temp, aerLW_temp, aerodp_temp)
-       this%tauLW_ = aerLW_temp(:,:,:,1)
-       this%ssaLW_ = aerLW_temp(:,:,:,2)
-       this%gLW_   = aerLW_temp(:,:,:,3)
-       this%tauLW_ = aerSW_temp(:,:,:,1)
-       this%ssaLW_ = aerSW_temp(:,:,:,2)
-       this%gLW_   = aerSW_temp(:,:,:,3)
+       !this%tauSW_ = aerSW_temp(:,:,:,1)
+       !this%ssaSW_ = aerSW_temp(:,:,:,2)
+       !this%gSW_   = aerSW_temp(:,:,:,3)
+       !this%tauLW_ = aerLW_temp(:,:,:,1)
+       !this%ssaLW_ = aerLW_temp(:,:,:,2)
+       !this%gLW_   = aerLW_temp(:,:,:,3)
+       ! Store SW/LW stacked spectrally in output array
+       call od%copy_in([aerSW_temp(1,1,:,1),aerLW_temp(1,1,:,1)])
+       call od_ssa%copy_in([aerSW_temp(1,1,:,2),aerLW_temp(1,1,:,2)])
+       call od_asym%copy_in([aerSW_temp(1,1,:,3),aerLW_temp(1,1,:,3)])
     end select
 
   end subroutine compute_optics
