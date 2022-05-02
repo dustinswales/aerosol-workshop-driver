@@ -1,4 +1,4 @@
 [submodule "ccpp-physics"]
 	path = my_model/UFS/ccpp-physics
-	url = https://github.com/dustinswales/ccpp-physics/
-	branch = UFS_ccpp_aerosols
+	url = https://github.com/NCAR/ccpp-physics/
+	branch = main
