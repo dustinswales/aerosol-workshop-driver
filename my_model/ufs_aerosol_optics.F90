@@ -27,6 +27,17 @@ module ufs_aerosol_optics
           nTracer_,      & ! Number of aerosol tracers
           nBandsSW_,     & ! Number of spectral bands (shortwave) 
           nBandsLW_        ! Number of spectral bands (longwave) 
+     real(rk), allocatable :: &
+          lon_(:),         & ! Longitude
+          lat_(:),         & ! Latitude
+          lsmask_(:),      & ! Land/sea mask (sea:0,land:1,sea-ice:2)
+          plev_(:,:),      & ! Pressure at model-interface (mb)
+          play_(:,:),      & ! Pressure at model-layer (mb)
+          prslk_(:,:),     & ! exner function = (p/p0)**rocp at model-layer (1)
+          tvlay_(:,:),     & ! Virtual temperature at model-layer  (k)
+          rhlay_(:,:),     & ! Relative humidity at model-layer (1)
+          tracer_(:,:,:),  & ! aerosol tracer concentration (kg/kg)
+          aerfld_(:,:,:)     ! GOCART aerosol climatology number concentration (kg-1)
     !> Optics grid in wave number [m-1]
     type(grid_t) :: grid_
     type(grid_t) :: gridLW_
@@ -43,17 +54,6 @@ module ufs_aerosol_optics
   !> Aerosol state specific to this model
   type, extends(state_t) :: ufs_state_t
      private
-     real(rk), allocatable :: &
-          lon_(:),         & ! Longitude
-          lat_(:),         & ! Latitude
-          lsmask_(:),      & ! Land/sea mask (sea:0,land:1,sea-ice:2)
-          plev_(:,:),      & ! Pressure at model-interface (mb)
-          play_(:,:),      & ! Pressure at model-layer (mb)
-          prslk_(:,:),     & ! exner function = (p/p0)**rocp at model-layer (1)
-          tvlay_(:,:),     & ! Virtual temperature at model-layer  (k)
-          rhlay_(:,:),     & ! Relative humidity at model-layer (1)
-          tracer_(:,:,:),  & ! aerosol tracer concentration (kg/kg)
-          aerfld_(:,:,:)     ! GOCART aerosol climatology number concentration (kg-1)
   end type ufs_state_t
 
   interface ufs_aerosol_optics_t
@@ -71,7 +71,8 @@ contains
     use aero_util,                 only : assert_msg
     use module_radsw_parameters,   only : NBDSW, wvnsw1=>wvnum1, wvnsw2=>wvnum2
     use module_radlw_parameters,   only : NBDLW, wvnlw1, wvnlw2
-    use module_radiation_aerosols, only : aer_init
+    use module_radiation_aerosols, only : aer_init, aer_update
+    use physparam,                 only : iaerflg, iaermdl, isolar, ictmflg, ico2flg, ioznflg, ivflip
     use aero_constants,            only : rk => real_kind
 #ifdef AERO_USE_NETCDF
     use netcdf, only : nf90_open, nf90_close, nf90_inq_varid, nf90_inquire_dimension,&
@@ -81,7 +82,12 @@ contains
     character(len=*), intent(in) :: description_file
     class(array_t), pointer :: interfaces
     integer :: i, status, ncid, nlevel, ntracer
-    integer,parameter :: nCol = 1
+    integer, parameter :: nCol = 1
+    ! UFS namelist for aerosols.
+    integer, parameter :: iaer  = 5111
+    integer, parameter :: ictm  = 1
+    integer, parameter :: year  = 2006
+    integer, parameter :: month = 1
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! COMMENT: 
@@ -90,9 +96,9 @@ contains
     ! which uses fields in state_t to produces the desirec optical fields
     ! defined in model_t.
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! 
-    integer :: varID1,varID2,varID3,varID4,varID5,varID6,varID7,varID8,varID9
+    integer :: varID1,varID2,varID3,varID4,varID5,varID6,varID7,varID8,varID9,varID10
     integer, dimension(3) :: dimIDs
-    real(rk),allocatable :: p_lay(:), p_lev(:), tv_lay(:), exner_lay(:), tracer(:,:), aero_mr(:,:)
+    real(rk),allocatable :: p_lay(:), p_lev(:), tv_lay(:), rh_lay(:), exner_lay(:), tracer(:,:), aero_mr(:,:)
     real(rk) :: lon,lat,lsmask
 
 #ifdef AERO_USE_NETCDF
@@ -120,6 +126,8 @@ contains
        if (status .ne. nf90_noerr) call handle_err(status)
        status =nf90_inq_varid(ncid,"aero_mr",varID9)
        if (status .ne. nf90_noerr) call handle_err(status)
+       status =nf90_inq_varid(ncid,"rh_lay",varID10)
+       if (status .ne. nf90_noerr) call handle_err(status)
        ! Allocate space
        status = nf90_inquire_variable(ncid,varID9,dimIDs=dimIDs)
        if (status .ne. nf90_noerr) call handle_err(status)
@@ -128,7 +136,7 @@ contains
        status = nf90_inquire_dimension(ncid,dimIDs(2),len = ntracer)
        if (status .ne. nf90_noerr) call handle_err(status)
        allocate(p_lay(nlevel), p_lev(nlevel), tv_lay(nlevel), exner_lay(nlevel),&
-            tracer(nlevel,ntracer), aero_mr(nlevel,ntracer))
+            tracer(nlevel,ntracer), aero_mr(nlevel,ntracer),rh_lay(nlevel))
        ! Read in data
        status = nf90_get_var(ncid,varID1,lon)
        if (status .ne. nf90_noerr) call handle_err(status)
@@ -148,6 +156,8 @@ contains
        if (status .ne. nf90_noerr) call handle_err(status)
        status = nf90_get_var(ncid,varID9,aero_mr)
        if (status .ne. nf90_noerr) call handle_err(status)
+       status = nf90_get_var(ncid,varID10,rh_lay)
+       if (status .ne. nf90_noerr) call handle_err(status)
        ! Close file
        status = nf90_close(ncid)
        if (status .ne. nf90_noerr) call handle_err(status)
@@ -160,8 +170,17 @@ contains
     ! Not sure what this statement does?
     allocate(model)
 
-    ! Call UFS aerosol optics initialization routine.
+    ! Call UFS aerosol optics initialization.
+    if ( ictm==0 .or. ictm==-2 ) then
+       iaerflg = mod(iaer, 100)        ! no volcanic aerosols for clim hindcast                                                                                    
+    else 
+       iaerflg = mod(iaer, 1000)
+    endif
+    iaermdl = iaer/1000               ! control flag for aerosol scheme selection
+    !
     call aer_init(nlevel,1)
+    !
+    call aer_update(year,month,1)
 
     ! Setup shortwave spectral grid
     interfaces => array_t( (wvnsw1+wvnsw2)*0.5 )
@@ -186,6 +205,30 @@ contains
     model%nTracer_  = ntracer
     model%nBandsSW_ = NBDSW
     model%nBandsLW_ = NBDLW
+
+    ! Allocate inputs to UFS aerosol model
+    allocate(model%lon_(   model%nCol_),                             &
+             model%lat_(   model%nCol_),                             &
+             model%lsmask_(model%nCol_),                             &
+             model%plev_(  model%nCol_, model%nLay_+1),              &
+             model%play_(  model%nCol_, model%nLay_),                &
+             model%prslk_( model%nCol_, model%nLay_),                &
+             model%tvlay_( model%nCol_, model%nLay_),                &
+             model%rhlay_( model%nCol_, model%nLay_),                &
+             model%tracer_(model%nCol_, model%nLay_, model%nTracer_),&
+             model%aerfld_(model%nCol_, model%nLay_, model%nTracer_))
+
+    ! Populate with data
+    model%lon_           = lon
+    model%lat_           = lat
+    model%lsmask_        = lsmask
+    model%plev_(1,:)     = p_lev
+    model%play_(1,:)     = p_lay
+    model%prslk_(1,:)    = exner_lay
+    model%tvlay_(1,:)    = tv_lay
+    model%rhlay_(1,:)    = rh_lay
+    model%tracer_(1,:,:) = tracer
+    model%aerfld_(1,:,:) = aero_mr
 
   end function constructor
 
@@ -212,16 +255,6 @@ contains
     allocate( ufs_state_t :: state )
     select type( state )
     class is( ufs_state_t )
-      allocate(state%lon_(   this%nCol_),                            &
-               state%lat_(   this%nCol_),                            &
-               state%lsmask_(this%nCol_),                            &
-               state%plev_(  this%nCol_, this%nLay_+1),              &
-               state%play_(  this%nCol_, this%nLay_),                &
-               state%prslk_( this%nCol_, this%nLay_),                &
-               state%tvlay_( this%nCol_, this%nLay_),                &
-               state%rhlay_( this%nCol_, this%nLay_),                &
-               state%tracer_(this%nCol_, this%nLay_, this%nTracer_), &
-               state%aerfld_(this%nCol_, this%nLay_, this%nTracer_))
     end select
 
   end function create_state
@@ -273,19 +306,17 @@ contains
                 aerodp_temp(this%nCol_, NSPC1),                         &
                 od_temp( this%nBandsLW_ )
 
-    select type( state )
-    class is( ufs_state_t )
-       call setaer(state%plev_, state%play_, state%prslk_, state%tvlay_,   &
-            state%rhlay_, state%lsmask_, state%tracer_, state%aerfld_,     &
-            state%lon_, state%lat_, this%nCol_, this%nLay_, this%nLay_+1,  &
-            this%do_SW_, this%do_LW_, aerSW_temp, aerLW_temp, aerodp_temp)
-    end select
+    call setaer(this%plev_, this%play_, this%prslk_, this%tvlay_,     &
+         this%rhlay_, this%lsmask_, this%tracer_, this%aerfld_,       &
+         this%lon_, this%lat_, this%nCol_, this%nLay_, this%nLay_+1,  &
+         this%do_SW_, this%do_LW_, aerSW_temp, aerLW_temp, aerodp_temp)
+
     ! this first hack-a-thon is just assuming a box model
     od_temp = aerLW_temp(1,1,:,1)
     call od%copy_in( od_temp )
-    od_temp = od_temp(:) * aerLW_temp(1,1,:,2)
+    od_temp = aerLW_temp(1,1,:,2)
     call od%copy_in( od_temp )
-    od_temp = od_temp(:) * aerLW_temp(1,1,:,3)
+    od_temp = aerLW_temp(1,1,:,3)
     call od%copy_in( od_temp )
 
   end subroutine compute_optics_lw
@@ -309,19 +340,17 @@ contains
                 aerodp_temp(this%nCol_, NSPC1),                         &
                 od_temp( this%nBandsSW_ )
 
-    select type( state )
-    class is( ufs_state_t )
-       call setaer(state%plev_, state%play_, state%prslk_, state%tvlay_,   &
-            state%rhlay_, state%lsmask_, state%tracer_, state%aerfld_,     &
-            state%lon_, state%lat_, this%nCol_, this%nLay_, this%nLay_+1,  &
-            this%do_SW_, this%do_LW_, aerSW_temp, aerLW_temp, aerodp_temp)
-    end select
+    call setaer(this%plev_, this%play_, this%prslk_, this%tvlay_,     &
+         this%rhlay_, this%lsmask_, this%tracer_, this%aerfld_,       &
+         this%lon_, this%lat_, this%nCol_, this%nLay_, this%nLay_+1,  &
+         this%do_SW_, this%do_LW_, aerSW_temp, aerLW_temp, aerodp_temp)
+
     ! this first hack-a-thon is just assuming a box model
     od_temp = aerSW_temp(1,1,:,1)
     call od%copy_in( od_temp )
-    od_temp = od_temp(:) * aerSW_temp(1,1,:,2)
+    od_temp = aerSW_temp(1,1,:,2)
     call od%copy_in( od_temp )
-    od_temp = od_temp(:) * aerSW_temp(1,1,:,3)
+    od_temp = aerSW_temp(1,1,:,3)
     call od%copy_in( od_temp )
 
   end subroutine compute_optics_sw
