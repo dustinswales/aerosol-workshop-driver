@@ -171,10 +171,6 @@ contains
     interfaces => array_t( (wvnlw1+wvnlw2)*0.5 )
     model%gridLW_ = grid_t(interfaces)
 
-    ! Need to still setup the generic grid_
-    interfaces => array_t( ([wvnsw1+wvnsw2,wvnlw1+wvnlw2])*0.5 )
-    model%grid_ = grid_t(interfaces)
-
     ! Set flags to control LW/SW schemes. Just set to true for now.
     ! *NOTE* These are used when the UFS aerosol-optics are used "inline". 
     ! It is often the case that the radiation isn't called at every 
