@@ -36,6 +36,8 @@ module ufs_aerosol_optics
           gLW_(:,:,:)      ! Asymmetry parameter (longwave)
     !> Optics grid in wave number [m-1]
     type(grid_t) :: grid_
+    type(grid_t) :: gridLW_
+    type(grid_t) :: gridSW_
   contains
     procedure :: name => model_name
     procedure :: create_state
@@ -46,10 +48,6 @@ module ufs_aerosol_optics
   !> Aerosol state specific to this model
   type, extends(state_t) :: ufs_state_t
      private
-     integer :: &
-          nCol_,           & ! Number of horizontal columns
-          nLay_,           & ! Number of vertical layers
-          nTracer_           ! Number of aerosol tracers
      real(rk), allocatable :: &
           lon_(:),         & ! Longitude
           lat_(:),         & ! Latitude
@@ -88,25 +86,44 @@ contains
     integer,parameter :: nLay    = 1
     integer,parameter :: nTracer = 1
 
-    ! Shortwave/Longwave spectral grid
-    interfaces => array_t( ([wvnsw1+wvnsw2,wvnlw1+wvnlw2])*0.5 )
+    ! Not sure what this statement does?
     allocate(model)
-    model%grid_ = grid_t(interfaces)
 
+    ! Call UFS aerosol optics initialization routine.
+    call aer_init(nLay,1)
+
+    ! Setup shortwave spectral grid
+    interfaces => array_t( (wvnsw1+wvnsw2)*0.5 )
+    model%gridSW_ = grid_t(interfaces)
+
+    ! Setup longwave spectral grid
+    interfaces => array_t( (wvnlw1+wvnlw2)*0.5 )
+    model%gridLW_ = grid_t(interfaces)
+
+    ! Set flags to control LW/SW schemes. Just set to true for now.
+    ! *NOTE* These are used when the UFS aerosol-optics are used "inline". 
+    ! It is often the case that the radiation isn't called at every 
+    ! timestep, and for the SW, at every grid-point (daylit only colummns 
+    ! for SW radiaiton). So the ability to flip on/off this calculation is
+    ! controlled with these flags, set by the host model.
     model%do_SW_ = .true.
     model%do_LW_ = .true.
+    
+    ! Call UFS aerosol initialization routine.
     call aer_init(nLay,1)
+
+    ! Setup aerosol optical outputs.
     model%nCol_     = nCol
     model%nLay_     = nLay
     model%nTracer_  = nTracer
     model%nBandsSW_ = NBDSW
     model%nBandsLW_ = NBDLW
-    !allocate(model%tauSW_(model%nCol_, model%nLay_, model%nBandsSW_))
-    !allocate(model%ssaSW_(model%nCol_, model%nLay_, model%nBandsSW_))
-    !allocate(model%gSW_(  model%nCol_, model%nLay_, model%nBandsSW_))
-    !allocate(model%tauLW_(model%nCol_, model%nLay_, model%nBandsLW_))
-    !allocate(model%ssaLW_(model%nCol_, model%nLay_, model%nBandsLW_))
-    !allocate(model%gLW_(  model%nCol_, model%nLay_, model%nBandsLW_))
+    allocate(model%tauSW_(model%nCol_, model%nLay_, model%nBandsSW_))
+    allocate(model%ssaSW_(model%nCol_, model%nLay_, model%nBandsSW_))
+    allocate(model%gSW_(  model%nCol_, model%nLay_, model%nBandsSW_))
+    allocate(model%tauLW_(model%nCol_, model%nLay_, model%nBandsLW_))
+    allocate(model%ssaLW_(model%nCol_, model%nLay_, model%nBandsLW_))
+    allocate(model%gLW_(  model%nCol_, model%nLay_, model%nBandsLW_))
 
   end function constructor
 
@@ -163,8 +180,7 @@ contains
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-  !> Computes optical property data, given an aerosol state and destination
-  !! arrays
+  !> Computes UFS aerosol optical properties
   subroutine compute_optics(this, state, od, od_ssa, od_asym )
     use aero_array,                   only : array_t
     use module_radiation_aerosols,    only : setaer, NSPC1
@@ -172,9 +188,9 @@ contains
     !
     class(ufs_aerosol_optics_t), intent(inout) :: this
     class(state_t),    intent(inout) :: state
-    class(array_t),    intent(inout) :: od         ! The code breaks if I remove these?
-    class(array_t),    intent(inout) :: od_ssa     ! The code breaks if I remove these?
-    class(array_t),    intent(inout) :: od_asym    ! The code breaks if I remove these?
+    class(array_t),    intent(inout) :: od
+    class(array_t),    intent(inout) :: od_ssa
+    class(array_t),    intent(inout) :: od_asym
     ! Locals
     real(rk) :: aerSW_temp( this%nCol_, this%nLay_, this%nBandsSW_, 3), &
                 aerLW_temp( this%nCol_, this%nLay_, this%nBandsLW_, 3), &
@@ -186,16 +202,12 @@ contains
             state%rhlay_, state%lsmask_, state%tracer_, state%aerfld_,     &
             state%lon_, state%lat_, this%nCol_, this%nLay_, this%nLay_+1,  &
             this%do_SW_, this%do_LW_, aerSW_temp, aerLW_temp, aerodp_temp)
-       !this%tauSW_ = aerSW_temp(:,:,:,1)
-       !this%ssaSW_ = aerSW_temp(:,:,:,2)
-       !this%gSW_   = aerSW_temp(:,:,:,3)
-       !this%tauLW_ = aerLW_temp(:,:,:,1)
-       !this%ssaLW_ = aerLW_temp(:,:,:,2)
-       !this%gLW_   = aerLW_temp(:,:,:,3)
-       ! Store SW/LW stacked spectrally in output array
-       call od%copy_in([aerSW_temp(1,1,:,1),aerLW_temp(1,1,:,1)])
-       call od_ssa%copy_in([aerSW_temp(1,1,:,2),aerLW_temp(1,1,:,2)])
-       call od_asym%copy_in([aerSW_temp(1,1,:,3),aerLW_temp(1,1,:,3)])
+       this%tauSW_ = aerSW_temp(:,:,:,1)
+       this%ssaSW_ = aerSW_temp(:,:,:,2)
+       this%gSW_   = aerSW_temp(:,:,:,3)
+       this%tauLW_ = aerLW_temp(:,:,:,1)
+       this%ssaLW_ = aerLW_temp(:,:,:,2)
+       this%gLW_   = aerLW_temp(:,:,:,3)
     end select
 
   end subroutine compute_optics
