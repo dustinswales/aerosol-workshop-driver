@@ -26,8 +26,9 @@ contains
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-  !> This helper creates an optical wavelength
-  type(grid_t) function create_host_wavelength_grid( ) result( grid )
+  !> This helper creates an longwave optical wavelength grid
+  !! TODO Adjust as needed to look like UFS
+  type(grid_t) function create_host_wavelength_grid_lw( ) result( grid )
 
     use aero_array,                    only : array_t
     use aero_constants,                only : rk => real_kind
@@ -47,7 +48,33 @@ contains
 
     grid = grid_t( interfaces )
 
-  end function create_host_wavelength_grid
+  end function create_host_wavelength_grid_lw
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+  !> This helper creates an shortwave optical wavelength grid
+  !! TODO Adjust as needed to look like UFS
+  type(grid_t) function create_host_wavelength_grid_sw( ) result( grid )
+
+    use aero_array,                    only : array_t
+    use aero_constants,                only : rk => real_kind
+    use aero_grid,                     only : grid_t
+
+    real(kind=rk) :: wavelengths(7) = & ! [nm]
+      (/ 440.0_rk, 557.5_rk, 675.0_rk, 777.5_rk, 870.0_rk, 945.0_rk, 1020.0_rk /)
+    real(kind=rk) :: wave_numbers(7) ! [m-1]
+    class(array_t), pointer :: interfaces
+    integer :: i
+
+    ! Convert to wave numbers for the grid's interfaces [m-1]
+    do i = 1, 7
+      wave_numbers(i) = 1.0e-9_rk / wavelengths(8-i)
+    end do
+    interfaces => array_t( wave_numbers )
+
+    grid = grid_t( interfaces )
+
+  end function create_host_wavelength_grid_sw
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -148,10 +175,11 @@ program compute_aero_optics
 
   class(model_t), pointer :: model
   class(state_t), pointer :: state
-  type(grid_t)            :: host_grid, aero_grid  ! wavelength grids for radiative properties
+  type(grid_t)            :: host_grid_lw, aero_grid_lw  ! wavelength grids for radiative properties
+  type(grid_t)            :: host_grid_sw, aero_grid_sw  ! wavelength grids for radiative properties
   class(array_t), pointer :: host_od, host_od_ssa, host_od_asym
   class(array_t), pointer :: aero_od, aero_od_ssa, aero_od_asym
-  type(interpolator_t)    :: interp
+  type(interpolator_t)    :: interp_lw, interp_sw
 
   if (command_argument_count() < 2) then
     call usage()
@@ -168,42 +196,80 @@ program compute_aero_optics
   state => model%create_state( )
 
   ! The host wavelength grid to which optical properties are interpolated.
-  host_grid = create_host_wavelength_grid();
+  ! TODO - modify these to use the UFS radiation grid
+  host_grid_lw = create_host_wavelength_grid_lw();
+  host_grid_sw = create_host_wavelength_grid_sw();
 
   ! The grid the model uses to compute optical properties.
-  aero_grid = model%optics_grid()
+  aero_grid_lw = model%optics_grid_lw()
+  aero_grid_sw = model%optics_grid_sw()
 
   ! An interpolator that interpolates data from aero_grid to host_grid,
   ! using a pre-selected scheme.
-  interp = interpolator_t( aero_grid, host_grid )
+  interp_lw = interpolator_t( aero_grid_lw, host_grid_lw )
+  interp_sw = interpolator_t( aero_grid_sw, host_grid_sw )
+
+  ! Do longwave stuff
 
   ! Make some arrays to store optical properties on the host and model grids.
-  host_od      => create_array_from_grid( host_grid )
-  host_od_ssa  => create_array_from_grid( host_grid )
-  host_od_asym => create_array_from_grid( host_grid )
-  aero_od      => create_array_from_grid( aero_grid )
-  aero_od_ssa  => create_array_from_grid( aero_grid )
-  aero_od_asym => create_array_from_grid( aero_grid )
+  host_od      => create_array_from_grid( host_grid_lw )
+  host_od_ssa  => create_array_from_grid( host_grid_lw )
+  host_od_asym => create_array_from_grid( host_grid_lw )
+  aero_od      => create_array_from_grid( aero_grid_lw )
+  aero_od_ssa  => create_array_from_grid( aero_grid_lw )
+  aero_od_asym => create_array_from_grid( aero_grid_lw )
 
   ! Have the aerosol model compute its optical properties on its native grid.
-  call model%compute_optics( state, aero_od, aero_od_ssa, aero_od_asym )
+  call model%compute_optics_lw( state, aero_od, aero_od_ssa, aero_od_asym )
 
   ! Interpolate the aerosol optics to the host grid.
-  call interp%interpolate( aero_od,      host_od      )
-  call interp%interpolate( aero_od_ssa,  host_od_ssa  )
-  call interp%interpolate( aero_od_asym, host_od_asym )
+  call interp_lw%interpolate( aero_od,      host_od      )
+  call interp_lw%interpolate( aero_od_ssa,  host_od_ssa  )
+  call interp_lw%interpolate( aero_od_asym, host_od_asym )
 
   ! Output the results
-  call write_optics_data( "fortran_host_results.py", host_grid, host_od,      &
+  call write_optics_data( "fortran_host_results_lw.py", host_grid_lw, host_od,&
                           host_od_ssa, host_od_asym )
 
-  ! Free memory
+  ! Free memory for longwave calcs
   deallocate( host_od      )
   deallocate( host_od_ssa  )
   deallocate( host_od_asym )
   deallocate( aero_od      )
   deallocate( aero_od_ssa  )
   deallocate( aero_od_asym )
+
+  ! Do shortwave stuff
+
+  ! Make some arrays to store optical properties on the host and model grids.
+  host_od      => create_array_from_grid( host_grid_sw )
+  host_od_ssa  => create_array_from_grid( host_grid_sw )
+  host_od_asym => create_array_from_grid( host_grid_sw )
+  aero_od      => create_array_from_grid( aero_grid_sw )
+  aero_od_ssa  => create_array_from_grid( aero_grid_sw )
+  aero_od_asym => create_array_from_grid( aero_grid_sw )
+
+  ! Have the aerosol model compute its optical properties on its native grid.
+  call model%compute_optics_sw( state, aero_od, aero_od_ssa, aero_od_asym )
+
+  ! Interpolate the aerosol optics to the host grid.
+  call interp_sw%interpolate( aero_od,      host_od      )
+  call interp_sw%interpolate( aero_od_ssa,  host_od_ssa  )
+  call interp_sw%interpolate( aero_od_asym, host_od_asym )
+
+  ! Output the results
+  call write_optics_data( "fortran_host_results_sw.py", host_grid_sw, host_od,&
+                          host_od_ssa, host_od_asym )
+
+  ! Free memory for longwave calcs
+  deallocate( host_od      )
+  deallocate( host_od_ssa  )
+  deallocate( host_od_asym )
+  deallocate( aero_od      )
+  deallocate( aero_od_ssa  )
+  deallocate( aero_od_asym )
+
+  ! Free memory
   deallocate( state        )
   deallocate( model        )
 
