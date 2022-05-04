@@ -27,13 +27,6 @@ module ufs_aerosol_optics
           nTracer_,      & ! Number of aerosol tracers
           nBandsSW_,     & ! Number of spectral bands (shortwave) 
           nBandsLW_        ! Number of spectral bands (longwave) 
-     real(rk), allocatable :: &
-          tauSW_(:,:,:), & ! Optical depth (shortwave)
-          ssaSW_(:,:,:), & ! Single scattering albedo (shortwave)
-          gSW_(:,:,:),   & ! Asymmetry parameter (shortwave)
-          tauLW_(:,:,:), & ! Optical depth (longwave)
-          ssaLW_(:,:,:), & ! Single scattering albedo (longwave)
-          gLW_(:,:,:)      ! Asymmetry parameter (longwave)
     !> Optics grid in wave number [m-1]
     type(grid_t) :: grid_
     type(grid_t) :: gridLW_
@@ -41,8 +34,10 @@ module ufs_aerosol_optics
   contains
     procedure :: name => model_name
     procedure :: create_state
-    procedure :: optics_grid
-    procedure :: compute_optics
+    procedure :: optics_grid_lw
+    procedure :: optics_grid_sw
+    procedure :: compute_optics_lw
+    procedure :: compute_optics_sw
   end type ufs_aerosol_optics_t
 
   !> Aerosol state specific to this model
@@ -195,12 +190,6 @@ contains
     model%nTracer_  = ntracer
     model%nBandsSW_ = NBDSW
     model%nBandsLW_ = NBDLW
-    allocate(model%tauSW_(model%nCol_, model%nLay_, model%nBandsSW_))
-    allocate(model%ssaSW_(model%nCol_, model%nLay_, model%nBandsSW_))
-    allocate(model%gSW_(  model%nCol_, model%nLay_, model%nBandsSW_))
-    allocate(model%tauLW_(model%nCol_, model%nLay_, model%nBandsLW_))
-    allocate(model%ssaLW_(model%nCol_, model%nLay_, model%nBandsLW_))
-    allocate(model%gLW_(  model%nCol_, model%nLay_, model%nBandsLW_))
 
   end function constructor
 
@@ -243,22 +232,36 @@ contains
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-  !> Returns the aerosol optics grid, discretized in wavenumber space
-  function optics_grid( this )
+  !> Returns the longwave aerosol optics grid, discretized in wavenumber space
+  function optics_grid_lw( this )
 
     !> Copy of optical property wave number grid
-    type(grid_t) :: optics_grid
+    type(grid_t) :: optics_grid_lw
     !> My aerosol model
     class(ufs_aerosol_optics_t), intent(in) :: this
 
-    optics_grid = this%grid_%clone( )
+    optics_grid_lw = this%gridLW_%clone( )
 
-  end function optics_grid
+  end function optics_grid_lw
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-  !> Computes UFS aerosol optical properties
-  subroutine compute_optics(this, state, od, od_ssa, od_asym )
+  !> Returns the shortwave aerosol optics grid, discretized in wavenumber space
+  function optics_grid_sw( this )
+
+    !> Copy of optical property wave number grid
+    type(grid_t) :: optics_grid_sw
+    !> My aerosol model
+    class(ufs_aerosol_optics_t), intent(in) :: this
+
+    optics_grid_sw = this%gridSW_%clone( )
+
+  end function optics_grid_sw
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+  !> Computes longwave aerosol optical properties
+  subroutine compute_optics_lw( this, state, od, od_ssa, od_asym )
     use aero_array,                   only : array_t
     use module_radiation_aerosols,    only : setaer, NSPC1
     use aero_constants,               only : rk => real_kind
@@ -271,7 +274,8 @@ contains
     ! Locals
     real(rk) :: aerSW_temp( this%nCol_, this%nLay_, this%nBandsSW_, 3), &
                 aerLW_temp( this%nCol_, this%nLay_, this%nBandsLW_, 3), &
-                aerodp_temp(this%nCol_, NSPC1)
+                aerodp_temp(this%nCol_, NSPC1),                         &
+                od_temp( this%nBandsLW_ )
 
     select type( state )
     class is( ufs_state_t )
@@ -279,22 +283,60 @@ contains
             state%rhlay_, state%lsmask_, state%tracer_, state%aerfld_,     &
             state%lon_, state%lat_, this%nCol_, this%nLay_, this%nLay_+1,  &
             this%do_SW_, this%do_LW_, aerSW_temp, aerLW_temp, aerodp_temp)
-       this%tauSW_ = aerSW_temp(:,:,:,1)
-       this%ssaSW_ = aerSW_temp(:,:,:,2)
-       this%gSW_   = aerSW_temp(:,:,:,3)
-       this%tauLW_ = aerLW_temp(:,:,:,1)
-       this%ssaLW_ = aerLW_temp(:,:,:,2)
-       this%gLW_   = aerLW_temp(:,:,:,3)
     end select
+    ! this first hack-a-thon is just assuming a box model
+    od_temp = aerLW_temp(1,1,:,1)
+    call od%copy_in( od_temp )
+    od_temp = od_temp(:) * aerLW_temp(1,1,:,2)
+    call od%copy_in( od_temp )
+    od_temp = od_temp(:) * aerLW_temp(1,1,:,3)
+    call od%copy_in( od_temp )
 
-  end subroutine compute_optics
+  end subroutine compute_optics_lw
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+  !> Computes shortwave aerosol optical properties
+  subroutine compute_optics_sw( this, state, od, od_ssa, od_asym )
+    use aero_array,                   only : array_t
+    use module_radiation_aerosols,    only : setaer, NSPC1
+    use aero_constants,               only : rk => real_kind
+    !
+    class(ufs_aerosol_optics_t), intent(inout) :: this
+    class(state_t),    intent(inout) :: state
+    class(array_t),    intent(inout) :: od
+    class(array_t),    intent(inout) :: od_ssa
+    class(array_t),    intent(inout) :: od_asym
+    ! Locals
+    real(rk) :: aerSW_temp( this%nCol_, this%nLay_, this%nBandsSW_, 3), &
+                aerLW_temp( this%nCol_, this%nLay_, this%nBandsLW_, 3), &
+                aerodp_temp(this%nCol_, NSPC1),                         &
+                od_temp( this%nBandsSW_ )
+
+    select type( state )
+    class is( ufs_state_t )
+       call setaer(state%plev_, state%play_, state%prslk_, state%tvlay_,   &
+            state%rhlay_, state%lsmask_, state%tracer_, state%aerfld_,     &
+            state%lon_, state%lat_, this%nCol_, this%nLay_, this%nLay_+1,  &
+            this%do_SW_, this%do_LW_, aerSW_temp, aerLW_temp, aerodp_temp)
+    end select
+    ! this first hack-a-thon is just assuming a box model
+    od_temp = aerSW_temp(1,1,:,1)
+    call od%copy_in( od_temp )
+    od_temp = od_temp(:) * aerSW_temp(1,1,:,2)
+    call od%copy_in( od_temp )
+    od_temp = od_temp(:) * aerSW_temp(1,1,:,3)
+    call od%copy_in( od_temp )
+
+  end subroutine compute_optics_sw
+
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   subroutine handle_err(status)
 #ifdef AERO_USE_NETCDF
     use netcdf, only : NF90_NOERR, nf90_strerror
 #endif
     integer, intent ( in) :: status
-    
+
     if(status /= nf90_noerr) then
        print *, "ERROR:", trim(nf90_strerror(status))
        stop "Stopped"

@@ -17,8 +17,12 @@ module aero_model
   contains
     procedure(model_name),     deferred :: name
     procedure(create_state),   deferred :: create_state
-    procedure(optics_grid),    deferred :: optics_grid
-    procedure(compute_optics), deferred :: compute_optics
+    procedure :: optics_grid
+    procedure :: optics_grid_lw
+    procedure :: optics_grid_sw
+    procedure :: compute_optics
+    procedure :: compute_optics_lw
+    procedure :: compute_optics_sw
   end type model_t
 
   type :: model_ptr
@@ -60,18 +64,64 @@ interface
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+end interface
+
+contains
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
   !> Returns the aerosol optics grid, discretized in wavenumber space
   function optics_grid( this )
 
     use aero_grid,                     only : grid_t
-    import :: model_t
+    use aero_util,                     only : die_msg
 
     !> Optical property wave number grid
     type(grid_t) :: optics_grid
     !> Aerosol model
     class(model_t), intent(in) :: this
 
+    call die_msg( 128803475, "This aerosol model does not provide optical "// &
+                             "properties on a continuous wavelength grid" )
+
   end function optics_grid
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+  !> Returns the longwave aerosol optics grid, discretized in wavenumber space
+  function optics_grid_lw( this )
+
+    use aero_grid,                     only : grid_t
+    use aero_util,                     only : die_msg
+
+    !> Optical property wave number grid
+    type(grid_t) :: optics_grid_lw
+    !> Aerosol model
+    class(model_t), intent(in) :: this
+
+    call die_msg( 957529823, "This aerosol model does not provide optical "// &
+                             "properties on a longwave wavelength grid" )
+
+  end function optics_grid_lw
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+  !> Returns the shortwave aerosol optics grid, discretized in wavenumber
+  !! space
+  function optics_grid_sw( this )
+
+    use aero_grid,                     only : grid_t
+    use aero_util,                     only : die_msg
+
+    !> Optical property wave number grid
+    type(grid_t) :: optics_grid_sw
+    !> Aerosol model
+    class(model_t), intent(in) :: this
+
+    call die_msg( 173206942, "This aerosol model does not provide optical "// &
+                             "properties on a shortwave wavelength grid" )
+
+  end function optics_grid_sw
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -81,7 +131,7 @@ interface
 
     use aero_array,                    only : array_t
     use aero_state,                    only : state_t
-    import :: model_t
+    use aero_util,                     only : die_msg
 
     !> Aerosol model
     class(model_t),    intent(inout) :: this
@@ -94,13 +144,62 @@ interface
     !> Aerosol asymmetric scattering optical depth [m]
     class(array_t),    intent(inout) :: od_asym
 
+    call die_msg( 324664447, "This aerosol model does not provide optical "// &
+                             "properties on a continuous wavelength grid" )
+
   end subroutine compute_optics
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-end interface
+  !> Calculates optical property data, given an aerosol state and destination
+  !! arrays for the longwave
+  subroutine compute_optics_lw( this, state, od, od_ssa, od_asym )
 
-contains
+    use aero_array,                    only : array_t
+    use aero_state,                    only : state_t
+    use aero_util,                     only : die_msg
+
+    !> Aerosol model
+    class(model_t),    intent(inout) :: this
+    !> Aerosol state
+    class(state_t),    intent(inout) :: state
+    !> Aerosol optical depth [m]
+    class(array_t),    intent(inout) :: od
+    !> Aerosol scattering optical depth [m]
+    class(array_t),    intent(inout) :: od_ssa
+    !> Aerosol asymmetric scattering optical depth [m]
+    class(array_t),    intent(inout) :: od_asym
+
+    call die_msg( 277354502, "This aerosol model does not provide optical "// &
+                             "properties on a longwave wavelength grid" )
+
+  end subroutine compute_optics_lw
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+  !> Calculates optical property data, given an aerosol state and destination
+  !! arrays for the shortwave
+  subroutine compute_optics_sw( this, state, od, od_ssa, od_asym )
+
+    use aero_array,                    only : array_t
+    use aero_state,                    only : state_t
+    use aero_util,                     only : die_msg
+
+    !> Aerosol model
+    class(model_t),    intent(inout) :: this
+    !> Aerosol state
+    class(state_t),    intent(inout) :: state
+    !> Aerosol optical depth [m]
+    class(array_t),    intent(inout) :: od
+    !> Aerosol scattering optical depth [m]
+    class(array_t),    intent(inout) :: od_ssa
+    !> Aerosol asymmetric scattering optical depth [m]
+    class(array_t),    intent(inout) :: od_asym
+
+    call die_msg( 335193061, "This aerosol model does not provide optical "// &
+                             "properties on a shortwave wavelength grid" )
+
+  end subroutine compute_optics_sw
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
