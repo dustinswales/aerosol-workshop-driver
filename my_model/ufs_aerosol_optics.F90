@@ -72,25 +72,101 @@ contains
   !> Creates and configure the aerosol model
   function constructor( description_file ) result( model )
     ! Dependencies
-    use aero_array,                    only : array_t
-    use aero_util,                     only : assert_msg
-    use module_radsw_parameters,       only : NBDSW, wvnsw1=>wvnum1, wvnsw2=>wvnum2
-    use module_radlw_parameters,       only : NBDLW, wvnlw1, wvnlw2
-    use module_radiation_aerosols,     only : aer_init
-
+    use aero_array,                only : array_t
+    use aero_util,                 only : assert_msg
+    use module_radsw_parameters,   only : NBDSW, wvnsw1=>wvnum1, wvnsw2=>wvnum2
+    use module_radlw_parameters,   only : NBDLW, wvnlw1, wvnlw2
+    use module_radiation_aerosols, only : aer_init
+    use aero_constants,            only : rk => real_kind
+#ifdef AERO_USE_NETCDF
+    use netcdf, only : nf90_open, nf90_close, nf90_inq_varid, nf90_inquire_dimension,&
+         NF90_NOWRITE, NF90_NOERR, nf90_get_var, nf90_inquire_variable
+#endif
     type(ufs_aerosol_optics_t), pointer    :: model
     character(len=*), intent(in) :: description_file
     class(array_t), pointer :: interfaces
-    integer :: i, netcdf_file
-    integer,parameter :: nCol    = 1
-    integer,parameter :: nLay    = 1
-    integer,parameter :: nTracer = 1
+    integer :: i, status, ncid, nlevel, ntracer
+    integer,parameter :: nCol = 1
+
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! COMMENT: 
+    ! All of this data ingest should go into state_t, not model_t
+    ! It should be that state_t and model_t are provided to compute_optics, 
+    ! which uses fields in state_t to produces the desirec optical fields
+    ! defined in model_t.
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! 
+    integer :: varID1,varID2,varID3,varID4,varID5,varID6,varID7,varID8,varID9
+    integer, dimension(3) :: dimIDs
+    real(rk),allocatable :: p_lay(:), p_lev(:), tv_lay(:), exner_lay(:), tracer(:,:), aero_mr(:,:)
+    real(rk) :: lon,lat,lsmask
+
+#ifdef AERO_USE_NETCDF
+    if( len_trim( description_file ) > 0 ) then
+       print*, "Reading in UFS aerosol driver data from ",description_file
+       ! Open file
+       status = nf90_open(description_file,nf90_nowrite,ncid)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       ! Get variable IDs
+       status = nf90_inq_varid(ncid,"lon",varID1)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status =nf90_inq_varid(ncid,"lat",varID2)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status =nf90_inq_varid(ncid,"lsmask",varID3)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status =nf90_inq_varid(ncid,"p_lev",varID4)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status =nf90_inq_varid(ncid,"p_lay",varID5)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status =nf90_inq_varid(ncid,"tv_lay",varID6)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status =nf90_inq_varid(ncid,"exner_lay",varID7)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status =nf90_inq_varid(ncid,"tracer",varID8)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status =nf90_inq_varid(ncid,"aero_mr",varID9)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       ! Allocate space
+       status = nf90_inquire_variable(ncid,varID9,dimIDs=dimIDs)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status = nf90_inquire_dimension(ncid,dimIDs(1),len = nlevel)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status = nf90_inquire_dimension(ncid,dimIDs(2),len = ntracer)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       allocate(p_lay(nlevel), p_lev(nlevel), tv_lay(nlevel), exner_lay(nlevel),&
+            tracer(nlevel,ntracer), aero_mr(nlevel,ntracer))
+       ! Read in data
+       status = nf90_get_var(ncid,varID1,lon)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status = nf90_get_var(ncid,varID2,lat)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status = nf90_get_var(ncid,varID3,lsmask)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status = nf90_get_var(ncid,varID4,p_lev)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status = nf90_get_var(ncid,varID5,p_lay)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status = nf90_get_var(ncid,varID6,tv_lay)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status = nf90_get_var(ncid,varID7,exner_lay)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status = nf90_get_var(ncid,varID8,tracer)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       status = nf90_get_var(ncid,varID9,aero_mr)
+       if (status .ne. nf90_noerr) call handle_err(status)
+       ! Close file
+       status = nf90_close(ncid)
+       if (status .ne. nf90_noerr) call handle_err(status)
+    endif
+#endif
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! END DATA INGEST BLOCK
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!    
 
     ! Not sure what this statement does?
     allocate(model)
 
     ! Call UFS aerosol optics initialization routine.
-    call aer_init(nLay,1)
+    call aer_init(nlevel,1)
 
     ! Setup shortwave spectral grid
     interfaces => array_t( (wvnsw1+wvnsw2)*0.5 )
@@ -100,6 +176,10 @@ contains
     interfaces => array_t( (wvnlw1+wvnlw2)*0.5 )
     model%gridLW_ = grid_t(interfaces)
 
+    ! Need to still setup the generic grid_
+    interfaces => array_t( ([wvnsw1+wvnsw2,wvnlw1+wvnlw2])*0.5 )
+    model%grid_ = grid_t(interfaces)
+
     ! Set flags to control LW/SW schemes. Just set to true for now.
     ! *NOTE* These are used when the UFS aerosol-optics are used "inline". 
     ! It is often the case that the radiation isn't called at every 
@@ -108,14 +188,11 @@ contains
     ! controlled with these flags, set by the host model.
     model%do_SW_ = .true.
     model%do_LW_ = .true.
-    
-    ! Call UFS aerosol initialization routine.
-    call aer_init(nLay,1)
 
     ! Setup aerosol optical outputs.
     model%nCol_     = nCol
-    model%nLay_     = nLay
-    model%nTracer_  = nTracer
+    model%nLay_     = nlevel
+    model%nTracer_  = ntracer
     model%nBandsSW_ = NBDSW
     model%nBandsLW_ = NBDLW
     allocate(model%tauSW_(model%nCol_, model%nLay_, model%nBandsSW_))
@@ -211,6 +288,18 @@ contains
     end select
 
   end subroutine compute_optics
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  subroutine handle_err(status)
+#ifdef AERO_USE_NETCDF
+    use netcdf, only : NF90_NOERR, nf90_strerror
+#endif
+    integer, intent ( in) :: status
+    
+    if(status /= nf90_noerr) then
+       print *, "ERROR:", trim(nf90_strerror(status))
+       stop "Stopped"
+    end if
+  end subroutine handle_err
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
